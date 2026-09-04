@@ -1,0 +1,410 @@
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>역학 시스템과 안전: 세이프티 장비 디자이너</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --primary: #2C3E50;
+            --secondary: #18BC9C;
+            --bg-color: #ecf0f1;
+            --text-color: #333;
+        }
+        body { margin: 0; font-family: 'Pretendard', sans-serif; background-color: var(--bg-color); color: var(--text-color); }
+        .dashboard { display: flex; height: 100vh; padding: 20px; box-sizing: border-box; gap: 20px; }
+        .panel { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        
+        /* 사이드바 (컨트롤) */
+        .sidebar { width: 300px; display: flex; flex-direction: column; gap: 15px; overflow-y: auto; }
+        h2 { margin-top: 0; font-size: 1.2rem; color: var(--primary); border-bottom: 2px solid var(--secondary); padding-bottom: 5px;}
+        .btn { background: var(--secondary); color: white; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold; transition: 0.2s; }
+        .btn:hover { background: #128f76; }
+        .btn-ai { background: #9b59b6; }
+        .btn-ai:hover { background: #8e44ad; }
+        .btn-sensor { background: #e74c3c; }
+        .btn-sensor:hover { background: #c0392b; }
+        
+        .material-list { display: flex; flex-direction: column; gap: 10px; }
+        .material-item { padding: 10px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 6px; cursor: pointer; text-align: center; }
+        .material-item:hover { background: #e9ecef; }
+        
+        /* 메인 시뮬레이션 화면 */
+        .main-view { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; }
+        #canvas-container { border: 2px solid #bdc3c7; border-radius: 8px; overflow: hidden; background: #fff;}
+        
+        /* 결과 및 그래프 */
+        .results { width: 400px; display: flex; flex-direction: column; gap: 15px; }
+        .report-card { background: #f8f9fa; padding: 15px; border-radius: 8px; font-size: 0.9rem; }
+        .report-card span { font-weight: bold; color: var(--primary); }
+    </style>
+</head>
+<body>
+
+<div class="dashboard">
+    <div class="panel sidebar">
+        <h2>실험체 선택</h2>
+        <select id="object-select" class="btn" style="background:#fff; color:#333; border:1px solid #ccc;">
+            <option value="egg">달걀 (한계치: 30N)</option>
+            <option value="phone">스마트폰 (한계치: 200N)</option>
+            <option value="mannequin">마네킹 (한계치: 3000N)</option>
+        </select>
+
+        <h2>완충 소재 장착 (클릭하여 추가)</h2>
+        <div class="material-list">
+            <div class="material-item" onclick="addMaterial('sponge')">스펀지 (저비용, 가벼움, +0.02s)</div>
+            <div class="material-item" onclick="addMaterial('rubber')">고무 패드 (중비용, 무거움, +0.05s)</div>
+            <div class="material-item" onclick="addMaterial('airbag')">에어백 (고비용, 중간무게, +0.1s)</div>
+        </div>
+        
+        <div class="report-card">
+            <div>현재 장착 비용: <span id="total-cost">0</span> 코인</div>
+            <div>현재 장착 무게: <span id="total-weight">0</span> kg</div>
+        </div>
+
+        <button class="btn" id="btn-drop">낙하 실험 시작 (Drop!)</button>
+        <label style="display:flex; align-items:center; gap:5px; font-size:0.9rem;">
+            <input type="checkbox" id="slow-mo"> 슬로 모션 리플레이 적용
+        </label>
+        
+        <button class="btn btn-ai" id="btn-ai">🤖 AI 최적화 가이드 분석</button>
+        <button class="btn btn-sensor" id="btn-sensor">📱 모바일 가속도 센서 연동</button>
+    </div>
+
+    <div class="panel main-view">
+        <h2 style="align-self: flex-start;">시뮬레이션 뷰</h2>
+        <div id="canvas-container"></div>
+        <div id="ai-feedback" style="margin-top:15px; color:#c0392b; font-weight:bold; text-align:center; min-height:40px;"></div>
+    </div>
+
+    <div class="panel results">
+        <h2>F-t (힘-시간) 그래프</h2>
+        <canvas id="ft-chart" width="400" height="250"></canvas>
+        
+        <h2>데이터 리포트</h2>
+        <div class="report-card">
+            <p>충돌 지속 시간 ($\Delta t$): <span id="res-time">0.00</span> 초</p>
+            <p>최대 충격력 ($F_{max}$): <span id="res-force">0.0</span> N</p>
+            <p>운동량 변화량 ($\Delta p$): <span id="res-dp">0.0</span> kg·m/s</p>
+            <p>에너지 흡수율: <span id="res-energy">0</span>%</p>
+            <p>안전 효율 등급: <span id="res-grade">-</span></p>
+            <h3 id="res-status" style="text-align:center; margin-top:15px;">대기 중</h3>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- 데이터 모델 ---
+    const objects = {
+        egg: { mass: 0.05, limit: 30, name: '달걀', color: '#f39c12' },
+        phone: { mass: 0.2, limit: 200, name: '스마트폰', color: '#34495e' },
+        mannequin: { mass: 50.0, limit: 3000, name: '마네킹', color: '#95a5a6' }
+    };
+    const materialsInfo = {
+        sponge: { dt_bonus: 0.02, cost: 10, weight: 0.1, color: '#f1c40f', energy: 15 },
+        rubber: { dt_bonus: 0.05, cost: 30, weight: 0.5, color: '#2c3e50', energy: 35 },
+        airbag: { dt_bonus: 0.1, cost: 100, weight: 0.2, color: '#ecf0f1', energy: 70 }
+    };
+
+    let currentObj = 'egg';
+    let equippedMaterials = [];
+    
+    // 시뮬레이션 상태 변수
+    let simState = 'idle'; // idle, falling, colliding, done
+    let yPos = 50;
+    let velocity = 0;
+    let gravity = 9.8;
+    let groundY = 450;
+    let timeScale = 1.0;
+    let collisionTimer = 0;
+    let totalDt = 0;
+    let peakForce = 0;
+    
+    // Chart.js 인스턴스
+    let ftChart;
+
+    // --- 초기화 ---
+    document.getElementById('object-select').addEventListener('change', (e) => {
+        currentObj = e.target.value;
+        resetSim();
+    });
+
+    document.getElementById('btn-drop').addEventListener('click', startSim);
+    document.getElementById('btn-ai').addEventListener('click', generateAIFeedback);
+    document.getElementById('btn-sensor').addEventListener('click', requestSensorAccess);
+
+    function initChart() {
+        const ctx = document.getElementById('ft-chart').getContext('2d');
+        ftChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: '충격력 (N)',
+                    data: [],
+                    borderColor: '#e74c3c',
+                    backgroundColor: 'rgba(231, 76, 60, 0.2)',
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    x: { title: { display: true, text: '시간 (초)' } },
+                    y: { title: { display: true, text: '힘 (N)' }, beginAtZero: true }
+                },
+                animation: false
+            }
+        });
+    }
+    initChart();
+
+    // --- 소재 장착 관리 ---
+    function addMaterial(type) {
+        if(simState !== 'idle' && simState !== 'done') return;
+        if(equippedMaterials.length >= 4) {
+            alert('장비는 최대 4겹까지만 장착할 수 있습니다.');
+            return;
+        }
+        equippedMaterials.push(type);
+        updateEquipmentUI();
+        resetSim();
+    }
+
+    function updateEquipmentUI() {
+        let cost = 0; let weight = 0;
+        equippedMaterials.forEach(m => {
+            cost += materialsInfo[m].cost;
+            weight += materialsInfo[m].weight;
+        });
+        document.getElementById('total-cost').innerText = cost;
+        document.getElementById('total-weight').innerText = weight.toFixed(1);
+    }
+
+    // --- 물리 엔진 & 시각화 (p5.js) ---
+    function setup() {
+        let canvas = createCanvas(400, 500);
+        canvas.parent('canvas-container');
+        resetSim();
+    }
+
+    function draw() {
+        background(240);
+        
+        // 지면 그리기
+        fill(100);
+        rect(0, groundY, width, height - groundY);
+
+        if (simState === 'falling') {
+            velocity += gravity * timeScale;
+            yPos += velocity * timeScale;
+            if (yPos >= groundY - 30) { // 충돌 시작
+                yPos = groundY - 30;
+                simState = 'colliding';
+                calculateCollision();
+            }
+        } else if (simState === 'colliding') {
+            collisionTimer += (0.016 * timeScale); // 60fps 기준
+            
+            // 찌그러지는 애니메이션 (스케일 조정)
+            let compressRatio = map(collisionTimer, 0, totalDt, 1, 0.4);
+            if(compressRatio < 0.4) compressRatio = 0.4;
+            
+            drawObject(width/2, yPos, compressRatio);
+
+            if (collisionTimer >= totalDt) {
+                simState = 'done';
+                updateReport();
+            }
+            return; // 충돌 중에는 아래 일반 그리기 생략
+        }
+        
+        drawObject(width/2, yPos, 1.0);
+    }
+
+    function drawObject(x, y, scaleY) {
+        push();
+        translate(x, y);
+        
+        // 1. 완충재 그리기 (바깥부터)
+        let radius = 30 + (equippedMaterials.length * 10);
+        for(let i = equippedMaterials.length - 1; i >= 0; i--) {
+            let mat = materialsInfo[equippedMaterials[i]];
+            fill(mat.color);
+            rectMode(CENTER);
+            rect(0, 0, radius * 2, radius * 2 * scaleY, 10);
+            radius -= 10;
+        }
+
+        // 2. 본체 그리기
+        fill(objects[currentObj].color);
+        ellipse(0, 0, 40, 40 * scaleY);
+        
+        // 파손 표현
+        if(simState === 'done' && peakForce > objects[currentObj].limit) {
+            stroke(255, 0, 0);
+            strokeWeight(3);
+            line(-15, -15, 15, 15);
+            line(15, -15, -15, 15);
+        }
+        pop();
+    }
+
+    function resetSim() {
+        simState = 'idle';
+        yPos = 50;
+        velocity = 0;
+        collisionTimer = 0;
+        document.getElementById('ai-feedback').innerText = "";
+        document.getElementById('res-status').innerText = "대기 중";
+        document.getElementById('res-status').style.color = "#333";
+        ftChart.data.labels = [];
+        ftChart.data.datasets[0].data = [];
+        ftChart.update();
+    }
+
+    function startSim() {
+        if(simState !== 'idle' && simState !== 'done') return;
+        resetSim();
+        let isSlowMo = document.getElementById('slow-mo').checked;
+        timeScale = isSlowMo ? 0.2 : 1.0;
+        simState = 'falling';
+    }
+
+    // --- 물리 연산 코어 ---
+    function calculateCollision() {
+        let obj = objects[currentObj];
+        let hitVelocity = velocity; // 충돌 직전 속도
+        
+        let deltaP = obj.mass * hitVelocity; // 운동량 변화량 (반발계수 0 가정)
+        
+        // 기본 충돌 시간 0.01초 + 소재별 추가 시간
+        totalDt = 0.01;
+        let totalEnergyAbsorb = 0;
+        
+        equippedMaterials.forEach(m => {
+            totalDt += materialsInfo[m].dt_bonus;
+            totalEnergyAbsorb += materialsInfo[m].energy;
+        });
+        
+        if(totalEnergyAbsorb > 99) totalEnergyAbsorb = 99;
+
+        // F = dp / dt (삼각형 형태의 충격량 모델 적용: 면적이 dp가 되려면 최고점은 평균힘의 2배)
+        let avgForce = deltaP / totalDt;
+        peakForce = avgForce * 2;
+
+        // 그래프 생성
+        generateGraph(totalDt, peakForce);
+        
+        // 데이터 저장 (보고서용)
+        document.getElementById('res-time').innerText = totalDt.toFixed(3);
+        document.getElementById('res-force').innerText = peakForce.toFixed(1);
+        document.getElementById('res-dp').innerText = deltaP.toFixed(2);
+        document.getElementById('res-energy').innerText = totalEnergyAbsorb;
+    }
+
+    function generateGraph(dt, maxF) {
+        let labels = [];
+        let data = [];
+        let steps = 20;
+        for(let i=0; i<=steps; i++) {
+            let t = (dt / steps) * i;
+            labels.push(t.toFixed(3));
+            // 사인파 형태로 F-t 곡선 근사치 생성
+            let f = maxF * Math.sin((Math.PI * i) / steps);
+            data.push(f.toFixed(1));
+        }
+        ftChart.data.labels = labels;
+        ftChart.data.datasets[0].data = data;
+        ftChart.update();
+    }
+
+    function updateReport() {
+        let obj = objects[currentObj];
+        let statusEl = document.getElementById('res-status');
+        
+        if (peakForce > obj.limit) {
+            statusEl.innerText = "❌ 물체 파손됨 (한계치 초과)";
+            statusEl.style.color = "#c0392b";
+        } else {
+            statusEl.innerText = "✅ 안전하게 보호됨!";
+            statusEl.style.color = "#27ae60";
+        }
+
+        // 안전 효율 등급 (최적화 개념)
+        let cost = parseInt(document.getElementById('total-cost').innerText);
+        let weight = parseFloat(document.getElementById('total-weight').innerText);
+        let grade = "-";
+        
+        if(peakForce <= obj.limit) {
+            if(cost <= 50 && weight <= 0.6) grade = "S (최우수 공학설계)";
+            else if(cost <= 100 && weight <= 1.0) grade = "A (우수)";
+            else grade = "B (보호 성공이나 비효율적)";
+        } else {
+            grade = "F (설계 실패)";
+        }
+        document.getElementById('res-grade').innerText = grade;
+    }
+
+    // --- AI 피드백 ---
+    function generateAIFeedback() {
+        if(simState !== 'done') {
+            alert('먼저 낙하 실험을 완료해주세요.'); return;
+        }
+        
+        let obj = objects[currentObj];
+        let fbEl = document.getElementById('ai-feedback');
+        
+        if(peakForce > obj.limit) {
+            fbEl.innerText = `💡 AI 분석: 충돌 시간(${totalDt.toFixed(3)}s)이 너무 짧아 최대 충격력(${peakForce.toFixed(1)}N)이 ${obj.name}의 한계치를 넘었습니다. 충돌 시간을 늘리기 위해 '에어백'을 추가하거나 완충재 두께를 늘려보세요.`;
+        } else {
+            let cost = parseInt(document.getElementById('total-cost').innerText);
+            if(cost > 100) {
+                fbEl.innerText = `💡 AI 분석: 안전하게 보호했지만 장비 비용과 무게가 큽니다. 가벼운 '스펀지'와 조합하여 비용을 줄이는 '최적화'를 시도해볼까요?`;
+            } else {
+                fbEl.innerText = `💡 AI 분석: 완벽합니다! 충격량(운동량 변화량)을 긴 충돌 시간으로 분산시켜 효율적으로 힘을 줄였습니다.`;
+            }
+        }
+    }
+
+    // --- 센서 연동 (실험 모드) ---
+    function requestSensorAccess() {
+        if (typeof DeviceMotionEvent.requestPermission === 'function') {
+            // iOS 13+ 권한 요청
+            DeviceMotionEvent.requestPermission()
+                .then(permissionState => {
+                    if (permissionState === 'granted') {
+                        startSensor();
+                    } else {
+                        alert("센서 권한이 거부되었습니다.");
+                    }
+                })
+                .catch(console.error);
+        } else {
+            // 안드로이드 또는 구형 기기
+            startSensor();
+        }
+    }
+
+    function startSensor() {
+        alert('모바일 기기를 가볍게 흔들거나 쿠션 위에 떨어뜨려 보세요! (기기 파손에 주의하세요)');
+        window.addEventListener('devicemotion', (event) => {
+            // 중력을 제외한 순수 가속도 (x, y, z)
+            let acc = event.acceleration;
+            if(acc) {
+                let totalG = Math.sqrt(acc.x**2 + acc.y**2 + acc.z**2);
+                // 변화가 클 때만 차트 업데이트 로직 (간소화)
+                if(totalG > 15) {
+                    console.log("강한 충격 감지:", totalG);
+                    // 실제 앱에서는 여기서 실시간 F-t 배열에 데이터를 push하여 차트를 업데이트합니다.
+                }
+            }
+        });
+    }
+</script>
+</body>
+</html>
