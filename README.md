@@ -1,1 +1,0 @@
-# Impulse-Physical-Quantity-Simulator
